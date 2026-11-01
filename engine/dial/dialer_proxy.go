@@ -119,11 +119,16 @@ func readHTTPProxyConnectResponse(conn net.Conn) (net.Conn, error) {
 }
 
 func (d *Dialer) dialDirectWithSocksProxy(ctx context.Context, network, usedAddr string, isIP bool) (net.Conn, error) {
+	upstream := d.socksUpstream()
+	if upstream == "" {
+		return nil, errors.New("no socks upstream")
+	}
+
 	goDialer := &net.Dialer{}
 	goDial := goDialer.DialContext
 
-	log.Printf("%s -> PROXY[%s]", usedAddr, d.dialDirectSocksProxy)
-	conn, err := goDial(ctx, "tcp", d.dialDirectSocksProxy)
+	log.Printf("%s -> PROXY[%s]", usedAddr, upstream)
+	conn, err := goDial(ctx, "tcp", upstream)
 	if err != nil {
 		return nil, err
 	}

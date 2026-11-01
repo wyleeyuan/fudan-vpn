@@ -252,10 +252,45 @@ final class MainViewController: NSViewController, NSWindowDelegate {
                 appendLog("浏览器已切到智能分流：系统 SOCKS -> 127.0.0.1:\(LocalPorts.split)")
             }
             syncProxyToggle()
+            startProxyWatchdog()
         default:
             statsLabel.stringValue = ""
+            stopProxyWatchdog()
         }
         onPhaseChange?(phase)
+    }
+
+    // MARK: 代理看门狗
+
+    private var proxyWatchdog: Timer?
+    private var proxyReclaimCount = 0
+
+    /// 连通之后盯着系统代理。
+    ///
+    /// Clash 一启动就会把系统代理写成自己的端口，那之后浏览器整条走 Clash，
+    /// 而 `icourse` 这类内网域名只有隧道才解析得出来，表现就是「GPT 好了、
+    /// 校内站打不开」。这里每隔几秒看一眼，被改走就指回分流口。
+    private func startProxyWatchdog() {
+        stopProxyWatchdog()
+        proxyReclaimCount = 0
+        guard SystemProxy.isEnabled else { return }
+
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self, self.tunnel.phase == .connected, SystemProxy.isEnabled else { return }
+            guard SystemProxy.reassertIfStolen() else { return }
+            self.proxyReclaimCount += 1
+            // 只在前几次记日志，避免和别的代理软件拉锯时把日志刷满
+            if self.proxyReclaimCount <= 3 {
+                self.appendLog("系统代理被其他软件改走，已重新指回 \(LocalPorts.split)")
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        proxyWatchdog = timer
+    }
+
+    private func stopProxyWatchdog() {
+        proxyWatchdog?.invalidate()
+        proxyWatchdog = nil
     }
 
     /// 用户对「浏览器走分流」的偏好。没设置过时按开启处理。

@@ -66,8 +66,41 @@ final class SystemProxy {
 
     static func disable() {
         guard let snap = load() else { return }
+        // 别人（Clash 之类）已经把系统代理改走了，就别再拿老快照盖回去——
+        // 那份快照记的是「我们接管之前」的样子，此刻已经过期，
+        // 硬还原会把用户刚调好的代理设置弄坏。
+        if !ownsCurrentProxy {
+            try? FileManager.default.removeItem(at: snapshotURL)
+            return
+        }
         restore(snap)
         try? FileManager.default.removeItem(at: snapshotURL)
+    }
+
+    /// 当前系统 SOCKS 是不是还指着我们的分流口。
+    static var ownsCurrentProxy: Bool {
+        resolveServiceName()
+        let socks = parse(get(["-getsocksfirewallproxy", serviceName]))
+        guard socks.enabled, socks.port > 0, socks.port <= 65535 else { return false }
+        return UInt16(socks.port) == LocalPorts.split
+    }
+
+    /// 连接期间发现系统代理被别人改回去了，就抢回来。
+    ///
+    /// Clash 启动或切换开关时会把系统代理写成自己的端口，那之后浏览器整条
+    /// 走 Clash——`icourse` 这种只有隧道才能解析的内网域名就必然打不开。
+    /// 快照还在说明用户仍然希望浏览器走分流，所以这里只改 SOCKS 一项，
+    /// 不重拍快照（否则会把「接管前」的原始状态弄丢）。
+    ///
+    /// 返回是否真的改过。
+    @discardableResult
+    static func reassertIfStolen() -> Bool {
+        guard isEnabled, !ownsCurrentProxy else { return false }
+        resolveServiceName()
+        run(["-setsocksfirewallproxy", serviceName, "127.0.0.1", "\(LocalPorts.split)"])
+        run(["-setwebproxystate", serviceName, "off"])
+        run(["-setsecurewebproxystate", serviceName, "off"])
+        return true
     }
 
     /// 进程退出或隧道断开时兜底，避免把用户的代理设置留在半截状态。

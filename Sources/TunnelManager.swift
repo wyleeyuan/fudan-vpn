@@ -79,7 +79,10 @@ final class TunnelManager {
             args += ["-dial-direct-proxy", "socks://127.0.0.1:\(upstream)"]
             emit("检测到本地代理 127.0.0.1:\(upstream)，非校内流量经它转发")
         } else {
-            emit("未发现其他代理，非校内流量直连")
+            // 交给引擎自己找。用户常常先连 VPN 再开 Clash，
+            // 端口定死在启动那一刻会漏掉「后开的代理」。
+            args += ["-dial-direct-proxy", "auto"]
+            emit("暂未发现其他代理，启动后会继续留意")
         }
         proc.arguments = args
 

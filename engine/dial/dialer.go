@@ -33,6 +33,18 @@ type Dialer struct {
 	alwaysUseVPN         bool
 	dialDirectHTTPProxy  string // format: "ip:port"
 	dialDirectSocksProxy string // WORKING IN PROCESS
+	autoSocks            *autoSocks
+}
+
+// socksUpstream 返回当前要用的 SOCKS 上游地址，没配就返回空。
+//
+// 配成 auto 的时候每次现探一遍：用户可能先连 VPN 再开 Clash，
+// 端口在进程启动那一刻定死就会漏掉这种情况，Google、ChatGPT 直接打不开。
+func (d *Dialer) socksUpstream() string {
+	if d.autoSocks != nil {
+		return d.autoSocks.current()
+	}
+	return d.dialDirectSocksProxy
 }
 
 // dialDirectIP need have a `hostAddr` parameter, which will be passed to PROXY. But `hostAddr` maybe empty, ipAddr never be empty.
@@ -45,7 +57,7 @@ func (d *Dialer) dialDirectIP(ctx context.Context, network, ipAddr string, hostA
 		}
 		return d.dialDirectWithHTTPProxy(ctx, usedAddr)
 		// only support tcp for socks proxy
-	} else if d.dialDirectSocksProxy != "" && network == "tcp" {
+	} else if d.socksUpstream() != "" && network == "tcp" {
 		if hostAddr != "" {
 			return d.dialDirectWithSocksProxy(ctx, network, hostAddr, false)
 		} else {
@@ -61,7 +73,7 @@ func (d *Dialer) dialDirectHost(ctx context.Context, network, hostAddr string) (
 	if d.dialDirectHTTPProxy != "" && network == "tcp" {
 		return d.dialDirectWithHTTPProxy(ctx, hostAddr)
 		// only support tcp for socks proxy
-	} else if d.dialDirectSocksProxy != "" && network == "tcp" {
+	} else if d.socksUpstream() != "" && network == "tcp" {
 		return d.dialDirectWithSocksProxy(ctx, network, hostAddr, false)
 	} else {
 		return d.dialDirectWithoutProxy(ctx, network, hostAddr)
@@ -246,7 +258,10 @@ func (d *Dialer) DialDirect(ctx context.Context, network, addr string) (net.Conn
 func NewDialer(stack stack.Stack, resolver *resolve.Resolver, ipResources []client.IPResource, alwaysUseVPN bool, dialDirectProxy string) *Dialer {
 	dialHttpProxy := ""
 	dialSocksProxy := ""
-	if strings.HasPrefix(dialDirectProxy, "http://") {
+	var auto *autoSocks
+	if dialDirectProxy == "auto" {
+		auto = newAutoSocks()
+	} else if strings.HasPrefix(dialDirectProxy, "http://") {
 		dialHttpProxy = strings.TrimPrefix(dialDirectProxy, "http://")
 	} else if strings.HasPrefix(dialDirectProxy, "socks://") {
 		dialSocksProxy = strings.TrimPrefix(dialDirectProxy, "socks://")
@@ -261,5 +276,6 @@ func NewDialer(stack stack.Stack, resolver *resolve.Resolver, ipResources []clie
 		alwaysUseVPN:         alwaysUseVPN,
 		dialDirectHTTPProxy:  dialHttpProxy,
 		dialDirectSocksProxy: dialSocksProxy,
+		autoSocks:            auto,
 	}
 }
