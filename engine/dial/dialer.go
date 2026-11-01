@@ -228,6 +228,21 @@ func (d *Dialer) Dial(ctx context.Context, network string, addr string) (net.Con
 	return d.DialIPPort(ctx, network, ip.String()+":"+port)
 }
 
+// DialDirect 走「本机直连」这条腿，不看 VPN 资源列表。
+//
+// 分流器判为 DIRECT 的目标交给它，而不是自己另起一个 net.Dialer ——
+// 因为只有这里认识 --dial-direct-proxy。用户在 Clash 里翻墙时，把这条腿
+// 接到 Clash 的端口上，Google、ChatGPT 这些才能照常出去。
+func (d *Dialer) DialDirect(ctx context.Context, network, addr string) (net.Conn, error) {
+	if host, ok := ctx.Value(resolve.ContextKeyResolveHost).(string); ok && host != "" {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			// 把原始域名（而不是解析后的 IP）交给代理，代理那边才能按域名分流
+			return d.dialDirectHost(ctx, network, host+":"+port)
+		}
+	}
+	return d.dialDirectIP(ctx, network, addr, "")
+}
+
 func NewDialer(stack stack.Stack, resolver *resolve.Resolver, ipResources []client.IPResource, alwaysUseVPN bool, dialDirectProxy string) *Dialer {
 	dialHttpProxy := ""
 	dialSocksProxy := ""

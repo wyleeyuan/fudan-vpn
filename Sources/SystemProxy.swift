@@ -98,6 +98,67 @@ final class SystemProxy {
         }
     }
 
+    // MARK: 上游代理
+
+    /// 找本机另一个正在跑的代理软件（Clash、Surge 之类）的端口。
+    ///
+    /// 浏览器被指到 1082 之后，非校内的流量总得有个出口。用户既然开着 Clash
+    /// 翻墙，就把这条腿接到它上面：Google、ChatGPT 照常访问，不用在
+    /// 「连校园网」和「用 GPT」之间来回切系统代理。
+    ///
+    /// 先看系统代理当前指向哪儿（那通常就是用户的主代理），再看几个常见端口。
+    /// 都找不到就返回 nil，退回普通直连。
+    static func upstreamProxyPort() -> UInt16? {
+        resolveServiceName()
+
+        for getter in ["-getsocksfirewallproxy", "-getsecurewebproxy", "-getwebproxy"] {
+            let info = parse(get([getter, serviceName]))
+            guard info.enabled, info.port > 0, info.port <= 65535 else { continue }
+            let host = info.server.lowercased()
+            guard host == "127.0.0.1" || host == "localhost" || host == "::1" else { continue }
+            let port = UInt16(info.port)
+            // 别把自己的端口当成上游，否则会转成死循环
+            guard port != LocalPorts.split, port != LocalPorts.tunnel, port != LocalPorts.http else { continue }
+            if isListening(port) { return port }
+        }
+
+        for port in [UInt16(7890), 7891, 6152, 10808, 8889] where isListening(port) {
+            return port
+        }
+        return nil
+    }
+
+    /// 本地端口有没有人在听。用非阻塞 connect + 200ms 超时判断，
+    /// 不调外部命令，也不会被 DNS 卡住。端口没人听时内核直接回 RST，几乎无耗时。
+    private static func isListening(_ port: UInt16) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK)
+
+        let rc = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if rc == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&pfd, 1, 200) == 1 else { return false }
+
+        var err: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 else { return false }
+        return err == 0
+    }
+
     // MARK: 快照读写
 
     private static func readSnapshot() -> Snapshot {

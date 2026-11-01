@@ -53,6 +53,16 @@ func ServeRouter(bindAddr string, vpnDialer *dial.Dialer, resolver *resolve.Reso
 			}
 			return nil, err
 		}
+		// 规则判为直连，但用户可能同时开着 Clash 翻墙。这条腿交给 dialer
+		// 的直连分支走：配了 --dial-direct-proxy 就交给那个代理，没配就是普通直连。
+		// 代理挂了就退回裸直连，别把国内站一起拖死。
+		if vpnDialer != nil {
+			if conn, err := vpnDialer.DialDirect(ctx, network, addr); err == nil {
+				return conn, nil
+			} else {
+				log.Printf("直连代理不可用（%v），%s 改走裸直连", err, addr)
+			}
+		}
 		return direct.DialContext(ctx, network, addr)
 	}
 

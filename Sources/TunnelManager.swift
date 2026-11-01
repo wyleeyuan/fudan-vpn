@@ -57,7 +57,7 @@ final class TunnelManager {
 
         let proc = Process()
         proc.executableURL = binary
-        proc.arguments = [
+        var args = [
             "-protocol",        "atrust",
             "-server",          "vpn.fudan.edu.cn",
             "-port",            "443",
@@ -71,6 +71,17 @@ final class TunnelManager {
             "-router-rules",    SplitRules.fileURL.path,
             "-client-data-file", clientDataURL.path
         ]
+
+        // 本机还开着别的代理（Clash 之类）时，把非校内的流量顺着它出去。
+        // 不然浏览器被指到 1082 之后，Google、ChatGPT 会被兜底规则判成直连，
+        // 在墙内直接连不上——用户只能在「连校园网」和「用 GPT」之间二选一。
+        if let upstream = SystemProxy.upstreamProxyPort() {
+            args += ["-dial-direct-proxy", "socks://127.0.0.1:\(upstream)"]
+            emit("检测到本地代理 127.0.0.1:\(upstream)，非校内流量经它转发")
+        } else {
+            emit("未发现其他代理，非校内流量直连")
+        }
+        proc.arguments = args
 
         // Go 的 net/http 会自动读取这些变量。不清掉的话，
         // 连校内服务器的流量会被系统里配置的代理接管，绕出国再绕回来。
