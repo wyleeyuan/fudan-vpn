@@ -2,6 +2,8 @@ package router
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -142,5 +144,59 @@ func TestDefaultRules(t *testing.T) {
 	}
 	if got := rt.Match("", net.ParseIP("192.168.1.1")); got != Direct {
 		t.Errorf("默认规则不应劫持家里的 192.168 网段，得到 %v", got)
+	}
+}
+
+// 登录域名必须直连：送进隧道时出口那边返回 host unreachable，
+// 浏览器表现成登录页一直转圈。
+func TestDefaultRulesLoginDirect(t *testing.T) {
+	rt, err := Load("")
+	if err != nil {
+		t.Fatalf("默认规则解析失败: %v", err)
+	}
+	for _, host := range []string{"id.fudan.edu.cn", "vpn.fudan.edu.cn"} {
+		if got := rt.Match(host, nil); got != Direct {
+			t.Errorf("%s 应直连，得到 %v", host, got)
+		}
+	}
+	// 内网域名（公网 DNS 查不到）必须走隧道解析
+	for _, host := range []string{"icourse.fudan.edu.cn", "ehall.fudan.edu.cn"} {
+		if got := rt.Match(host, nil); got != Tunnel {
+			t.Errorf("%s 应走隧道，得到 %v", host, got)
+		}
+	}
+}
+
+// 改完规则文件不重启也该生效。
+func TestReloadOnChange(t *testing.T) {
+	old := reloadInterval
+	reloadInterval = 0
+	defer func() { reloadInterval = old }()
+
+	path := filepath.Join(t.TempDir(), "rules.conf")
+	if err := os.WriteFile(path, []byte("MATCH,DIRECT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if got := rt.Match("ehall.fudan.edu.cn", nil); got != Direct {
+		t.Fatalf("初始应为直连，得到 %v", got)
+	}
+
+	if err := os.WriteFile(path, []byte("DOMAIN-SUFFIX,fudan.edu.cn,TUNNEL\nMATCH,DIRECT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.Match("ehall.fudan.edu.cn", nil); got != Tunnel {
+		t.Errorf("改文件后应自动重载为隧道，得到 %v", got)
+	}
+
+	// 写坏了要保住上一版，不能让分流当场瘫痪
+	if err := os.WriteFile(path, []byte("DOMAIN-SUFFIX,fudan.edu.cn\nMATCH,DIRECT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.Match("ehall.fudan.edu.cn", nil); got != Tunnel {
+		t.Errorf("规则写坏时应继续用上一版，得到 %v", got)
 	}
 }

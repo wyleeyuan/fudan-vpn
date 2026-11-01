@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Action 是一条连接的去向。
@@ -59,17 +61,83 @@ type rule struct {
 	action Action
 }
 
-// Router 是解析后的规则表。加载完就只读，多个连接并发匹配是安全的。
+// reloadInterval 是两次检查规则文件是否变动的最小间隔。
+//
+// 每个新连接都会匹配一次规则，如果每次都 stat 一遍文件，
+// 高并发时会白跑很多系统调用；两秒一次足够「改完存盘即生效」的手感。
+// 测试里会把它调成 0。
+var reloadInterval = 2 * time.Second
+
+// Router 是解析后的规则表。并发匹配安全。
+//
+// 规则文件改过之后会在下一个连接上自动重载（见 refresh），
+// 所以用户不用重启 App —— 这一点 rules.conf 的注释里是承诺过的。
 type Router struct {
-	rules []rule
-	path  string
+	mu       sync.RWMutex
+	rules    []rule
+	path     string
+	modTime  time.Time
+	size     int64
+	lastStat time.Time
 }
 
 // Path 返回规则文件路径，空字符串表示用的是内置默认规则。
-func (r *Router) Path() string { return r.path }
+func (r *Router) Path() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.path
+}
 
 // Len 返回规则条数。
-func (r *Router) Len() int { return len(r.rules) }
+func (r *Router) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.rules)
+}
+
+// refresh 在规则文件变动后重载一次。
+//
+// 解析失败时保留旧规则：用户手改文件写错一行，不该让整个分流当场瘫痪。
+// 错误打到 stderr，engine 的日志里能看到。
+func (r *Router) refresh() {
+	r.mu.RLock()
+	path, last := r.path, r.lastStat
+	r.mu.RUnlock()
+
+	if path == "" || time.Since(last) < reloadInterval {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if time.Since(r.lastStat) < reloadInterval {
+		return
+	}
+	r.lastStat = time.Now()
+
+	fi, err := os.Stat(r.path)
+	if err != nil || (fi.ModTime().Equal(r.modTime) && fi.Size() == r.size) {
+		return
+	}
+
+	f, err := os.Open(r.path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	next, err := Parse(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "规则文件有错，继续用上一版：%v\n", err)
+		return
+	}
+
+	r.rules = next.rules
+	r.modTime = fi.ModTime()
+	r.size = fi.Size()
+	fmt.Fprintf(os.Stderr, "已重载分流规则 %s（%d 条）\n", r.path, len(r.rules))
+}
 
 // Match 按顺序匹配，返回第一条命中的动作。
 //
@@ -79,7 +147,13 @@ func (r *Router) Len() int { return len(r.rules) }
 func (r *Router) Match(host string, ip net.IP) Action {
 	host = normalizeHost(host)
 
-	for _, ru := range r.rules {
+	r.refresh()
+
+	r.mu.RLock()
+	rules := r.rules
+	r.mu.RUnlock()
+
+	for _, ru := range rules {
 		switch ru.typ {
 		case typeDomain:
 			if host != "" && host == ru.value {
@@ -239,6 +313,11 @@ func Load(path string) (*Router, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	rt.path = path
+	// 记下加载时的状态，refresh 靠它判断文件有没有再被改过
+	if fi, err := os.Stat(path); err == nil {
+		rt.modTime = fi.ModTime()
+		rt.size = fi.Size()
+	}
 	return rt, nil
 }
 
