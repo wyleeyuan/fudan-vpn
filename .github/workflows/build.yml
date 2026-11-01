@@ -78,7 +78,7 @@ jobs:
         run: |
           cd build
           cp ../engine/router/default_rules.conf rules.conf
-          cat > 使用说明.txt <<'TXT'
+          cat > README.txt <<'TXT'
           复旦 VPN —— Windows 版
 
           1. 解压到一个固定目录（不要直接放在下载文件夹里运行，三个文件必须在一起）
@@ -96,8 +96,9 @@ jobs:
 
           本程序基于 zju-connect 修改，遵循 AGPL-3.0。
           TXT
-          7z a -tzip "FudanVPN-${{ steps.v.outputs.version }}-windows-amd64.zip" \
-            fudan-vpn.exe fudan-connect.exe rules.conf 使用说明.txt
+          # Windows 自带的 bsdtar 按扩展名自动选 zip 格式，不依赖 7-Zip 装在哪
+          tar -a -c -f "FudanVPN-${{ steps.v.outputs.version }}-windows-amd64.zip" \
+            fudan-vpn.exe fudan-connect.exe rules.conf README.txt
 
       - name: 自检
         shell: bash
@@ -208,7 +209,7 @@ jobs:
           V="${{ steps.v.outputs.version }}"
           cd build/cli
           cp "$GITHUB_WORKSPACE/engine/router/default_rules.conf" rules.conf
-          cat > 使用说明.txt <<'TXT'
+          cat > README.txt <<'TXT'
           复旦 VPN 命令行版 —— fudan-connect
 
           用法与 zju-connect 一致，把名字换掉即可：
@@ -264,10 +265,10 @@ jobs:
 
             | 你的设备 | 下这个 |
             |---|---|
-            | Mac（Apple 芯片 / Intel 都行） | `FudanVPN-x.y.z.dmg` |
-            | Windows 10 / 11 | `FudanVPN-x.y.z-windows-amd64.zip` |
-            | Linux 桌面（x86_64） | `FudanVPN-x.y.z-linux-amd64.tar.gz` |
-            | 服务器 / 树莓派 / 路由器 | `fudan-connect-x.y.z-cli.tar.gz` |
+            | Mac（Apple 芯片 / Intel 都行） | `FudanVPN-<版本>.dmg` |
+            | Windows 10 / 11 | `FudanVPN-<版本>-windows-amd64.zip` |
+            | Linux 桌面（x86_64） | `FudanVPN-<版本>-linux-amd64.tar.gz` |
+            | 服务器 / 树莓派 / 路由器 | `fudan-connect-<版本>-cli.tar.gz` |
 
             ## 第一次打开
 
