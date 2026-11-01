@@ -1,0 +1,292 @@
+name: build
+
+# 打 tag（v0.5.0）自动出三平台安装包并挂到 Release；也可以在 Actions 页面手动跑。
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS 原生版
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          check-latest: true
+          cache-dependency-path: |
+            engine/go.sum
+            desktop/go.sum
+
+      # build.sh 会把 Swift 和引擎各编两份再 lipo 成通用二进制
+      - name: 编译并打包 App
+        run: ./build.sh
+
+      - name: 生成 DMG
+        run: SKIP_BUILD=1 ./Tools/make_dmg.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: build/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows 桌面版
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          check-latest: true
+          cache-dependency-path: |
+            engine/go.sum
+            desktop/go.sum
+
+      - name: 读取版本
+        id: v
+        shell: bash
+        run: |
+          V=$(grep -A1 CFBundleShortVersionString Resources/Info.plist | tail -1 | sed 's/[^0-9.]//g')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: 编译引擎
+        shell: bash
+        run: |
+          mkdir -p build
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -C engine -trimpath \
+            -ldflags "-s -w -X main.zjuConnectVersion=${{ steps.v.outputs.version }}" \
+            -o "$GITHUB_WORKSPACE/build/fudan-connect.exe" .
+
+      - name: 编译桌面端
+        shell: bash
+        run: |
+          cd desktop
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags "desktop,production" -trimpath \
+            -ldflags "-s -w -H windowsgui" -o ../build/fudan-vpn.exe .
+
+      - name: 组装
+        shell: bash
+        run: |
+          cd build
+          cp ../engine/router/default_rules.conf rules.conf
+          cat > 使用说明.txt <<'TXT'
+          复旦 VPN —— Windows 版
+
+          1. 解压到一个固定目录（不要直接放在下载文件夹里运行，三个文件必须在一起）
+          2. 双击 fudan-vpn.exe
+             首次运行如果提示「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」
+          3. 点「登录」，浏览器打开复旦统一身份认证，手机扫码
+          4. 登录完成后地址栏是一条 https://vpn.fudan.edu.cn/passport/v1/auth/httpsOauth2?code=...
+             的网址，整条复制，粘回窗口，点「连接」
+
+          分流：默认只把复旦的域名和校内网段送进隧道，其余流量直连，
+                不会影响 Clash 或其它代理软件。
+          规则：%APPDATA%\FudanVPN\rules.conf，也可以在程序里改。
+
+          登录页可以随时关掉，不会卡住。
+
+          本程序基于 zju-connect 修改，遵循 AGPL-3.0。
+          TXT
+          7z a -tzip "FudanVPN-${{ steps.v.outputs.version }}-windows-amd64.zip" \
+            fudan-vpn.exe fudan-connect.exe rules.conf 使用说明.txt
+
+      - name: 自检
+        shell: bash
+        run: ./build/fudan-connect.exe --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux 桌面版
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          check-latest: true
+          cache-dependency-path: |
+            engine/go.sum
+            desktop/go.sum
+
+      # Wails 编译要 GTK3 和 WebKitGTK 4.1 的头文件
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: 读取版本
+        id: v
+        run: |
+          V=$(grep -A1 CFBundleShortVersionString Resources/Info.plist | tail -1 | sed 's/[^0-9.]//g')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: 编译引擎
+        run: |
+          mkdir -p build
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -C engine -trimpath \
+            -ldflags "-s -w -X main.zjuConnectVersion=${{ steps.v.outputs.version }}" \
+            -o "$GITHUB_WORKSPACE/build/fudan-connect" .
+
+      - name: 编译桌面端
+        run: |
+          cd desktop
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "desktop,production" -trimpath \
+            -ldflags "-s -w" -o ../build/fudan-vpn .
+
+      - name: 组装
+        run: |
+          cd build
+          cp ../engine/router/default_rules.conf rules.conf
+          chmod +x fudan-vpn fudan-connect
+          tar -czf "FudanVPN-${{ steps.v.outputs.version }}-linux-amd64.tar.gz" \
+            fudan-vpn fudan-connect rules.conf
+
+      - name: 自检
+        run: |
+          ./build/fudan-connect --version
+          file build/fudan-vpn
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: build/*.tar.gz
+          if-no-files-found: error
+
+  cli:
+    name: 命令行版（服务器/路由器）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          check-latest: true
+          cache-dependency-path: engine/go.sum
+
+      - name: 读取版本
+        id: v
+        run: |
+          V=$(grep -A1 CFBundleShortVersionString Resources/Info.plist | tail -1 | sed 's/[^0-9.]//g')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: 交叉编译各平台
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          OUT="$GITHUB_WORKSPACE/build/cli"
+          mkdir -p "$OUT"
+          for t in linux/amd64 linux/arm64 linux/arm linux/mipsle darwin/arm64 darwin/amd64 windows/amd64; do
+            goos=${t%/*}
+            goarch=${t#*/}
+            ext=""
+            [ "$goos" = windows ] && ext=".exe"
+            printf '  %-18s' "$goos/$goarch"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
+              go build -C "$GITHUB_WORKSPACE/engine" -trimpath \
+              -ldflags "-s -w -X main.zjuConnectVersion=$V" \
+              -o "$OUT/fudan-connect-$goos-$goarch$ext" .
+            printf '%s\n' "$(du -h "$OUT/fudan-connect-$goos-$goarch$ext" | cut -f1)"
+          done
+
+      - name: 组装
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          cd build/cli
+          cp "$GITHUB_WORKSPACE/engine/router/default_rules.conf" rules.conf
+          cat > 使用说明.txt <<'TXT'
+          复旦 VPN 命令行版 —— fudan-connect
+
+          用法与 zju-connect 一致，把名字换掉即可：
+            ./fudan-connect -server vpn.fudan.edu.cn -port 443 \
+              -protocol atrust -auth-type auth/httpsOauth2 \
+              -login-domain id.fudan.edu.cn -oauth2-code <授权码> \
+              -socks-bind 127.0.0.1:1080 \
+              -router-bind 127.0.0.1:1082 -router-rules rules.conf
+
+          授权码怎么拿：浏览器打开 https://vpn.fudan.edu.cn ，扫码登录后
+          地址栏那条 https://vpn.fudan.edu.cn/passport/v1/auth/httpsOauth2?code=...
+          里 code= 后面就是。
+
+          -router-bind 是分流口：按 rules.conf 里的规则，复旦的域名和校内网段
+          进隧道，其余直连。不需要分流就用 -socks-bind。
+          -tun-mode 需要 root 权限，Windows 还要把 wintun.dll 放在同目录。
+
+          ./fudan-connect --help 看全部参数。
+
+          本程序基于 zju-connect 修改，遵循 AGPL-3.0。
+          TXT
+          cd ..
+          tar -czf "fudan-connect-$V-cli.tar.gz" cli
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli
+          path: build/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: 发布
+    needs: [macos, windows, linux, cli]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -lh dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            在校园网外连回校内。只把复旦的流量送进隧道，其余直连 —— 不影响 Clash，不影响打游戏。
+
+            ## 下载
+
+            | 你的设备 | 下这个 |
+            |---|---|
+            | Mac（Apple 芯片 / Intel 都行） | `FudanVPN-x.y.z.dmg` |
+            | Windows 10 / 11 | `FudanVPN-x.y.z-windows-amd64.zip` |
+            | Linux 桌面（x86_64） | `FudanVPN-x.y.z-linux-amd64.tar.gz` |
+            | 服务器 / 树莓派 / 路由器 | `fudan-connect-x.y.z-cli.tar.gz` |
+
+            ## 第一次打开
+
+            **macOS**：没有付费开发者账号，没做 Apple 公证。拖进「应用程序」后，
+            在图标上点右键 → 打开 → 再点「打开」，只需要一次。
+
+            **Windows**：SmartScreen 可能提示「Windows 已保护你的电脑」，
+            点「更多信息」→「仍要运行」。
+
+            **Linux**：`tar -xzf` 解压，几个文件放同一目录，运行 `./fudan-vpn`。
+
+            ## 怎么用
+
+            1. 点「登录」，浏览器打开复旦统一身份认证，手机扫码
+            2. 登录完地址栏是一条 `https://vpn.fudan.edu.cn/passport/v1/auth/httpsOauth2?code=...` 的网址
+            3. 整条复制，粘回程序，点「连接」
+
+            登录页随时能关（红叉 / ⌘W / Esc），不会卡住。
+
+            默认只把复旦的域名和校内网段送进隧道，其余流量直连。规则在程序里可以改。
+
+            详细说明见 [README](https://github.com/wyleeyuan/fudan-vpn#readme)。
