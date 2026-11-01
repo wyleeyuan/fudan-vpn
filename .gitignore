@@ -5,3 +5,6 @@ FudanVPN.app.prev/
 *.o
 *.dSYM/
 build/
+desktop/build/
+desktop/frontend/node_modules/
+desktop/frontend/dist/*.map
