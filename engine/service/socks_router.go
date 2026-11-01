@@ -37,7 +37,21 @@ func ServeRouter(bindAddr string, vpnDialer *dial.Dialer, resolver *resolve.Reso
 		}
 
 		if rt.Match(host, ip) == router.Tunnel {
-			return vpnDialer.DialIPPort(ctx, network, addr)
+			conn, err := vpnDialer.DialIPPort(ctx, network, addr)
+			if err == nil {
+				return conn, nil
+			}
+			// 隧道这条腿走不通就退回直连，有两种常见原因：
+			//   1. ErrACLDenied：目标不在学校下发的资源列表里；
+			//   2. 服务端拒绝：jwc、cs 这类公网站点会回
+			//      "tcp tunnel connection not allowed"。
+			// 这两种目标本来就公网可达，直连即可；真正的内网地址直连也到不了
+			// （拨过去只会超时），所以回落不会把内网流量漏到公网。
+			log.Printf("隧道拨号失败（%v），%s 改走直连", err, addr)
+			if directConn, directErr := direct.DialContext(ctx, network, addr); directErr == nil {
+				return directConn, nil
+			}
+			return nil, err
 		}
 		return direct.DialContext(ctx, network, addr)
 	}

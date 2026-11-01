@@ -244,10 +244,26 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         switch phase {
         case .connected:
             statsLabel.stringValue = "分流 \(LocalPorts.split)"
+            // 默认就把浏览器接到分流器上：连上之后校内站点应当直接能开，
+            // 不该还要用户先去窗口里找一个勾选框。取消过就一直记着，不会
+            // 每次连接又替用户打开。
+            if Self.browserProxyWanted && !SystemProxy.isEnabled {
+                SystemProxy.enable()
+                appendLog("浏览器已切到智能分流：系统 SOCKS -> 127.0.0.1:\(LocalPorts.split)")
+            }
+            syncProxyToggle()
         default:
             statsLabel.stringValue = ""
         }
         onPhaseChange?(phase)
+    }
+
+    /// 用户对「浏览器走分流」的偏好。没设置过时按开启处理。
+    private static let browserProxyKey = "BrowserProxyEnabled"
+    private static var browserProxyWanted: Bool {
+        UserDefaults.standard.object(forKey: browserProxyKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: browserProxyKey)
     }
 
     private func primaryAction() {
@@ -283,6 +299,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     var canToggleSystemProxy: Bool { tunnel.phase == .connected }
 
     func setSystemProxy(_ on: Bool) {
+        // 记住这一次的选择，下次连接按它来
+        UserDefaults.standard.set(on, forKey: Self.browserProxyKey)
         if on {
             guard tunnel.phase == .connected else {
                 syncProxyToggle()
