@@ -96,13 +96,27 @@ jobs:
 
           本程序基于 zju-connect 修改，遵循 AGPL-3.0。
           TXT
-          # Windows 自带的 bsdtar 按扩展名自动选 zip 格式，不依赖 7-Zip 装在哪
-          tar -a -c -f "FudanVPN-${{ steps.v.outputs.version }}-windows-amd64.zip" \
-            fudan-vpn.exe fudan-connect.exe rules.conf README.txt
+      # Git Bash 里的 tar 是 GNU tar，不认 -a，会把 zip 写成 tar。压缩交给 PowerShell。
+      - name: 压缩
+        shell: pwsh
+        run: |
+          Compress-Archive -Force `
+            -Path build/fudan-vpn.exe, build/fudan-connect.exe, build/rules.conf, build/README.txt `
+            -DestinationPath "build/FudanVPN-${{ steps.v.outputs.version }}-windows-amd64.zip"
+          Get-Item build/*.zip | Format-List Name, Length
 
       - name: 自检
         shell: bash
         run: ./build/fudan-connect.exe --version
+
+      # 之前用 GNU tar 冒充 zip，下载下来解压不了。这里真的解一遍。
+      - name: 校验压缩包
+        shell: pwsh
+        run: |
+          Expand-Archive -Path build/FudanVPN-*-windows-amd64.zip -DestinationPath "$env:RUNNER_TEMP\check"
+          Get-ChildItem "$env:RUNNER_TEMP\check" | Format-Table Name, Length
+          if (-not (Test-Path "$env:RUNNER_TEMP\check\fudan-vpn.exe")) { throw "压缩包里缺 fudan-vpn.exe" }
+          if (-not (Test-Path "$env:RUNNER_TEMP\check\fudan-connect.exe")) { throw "压缩包里缺 fudan-connect.exe" }
 
       - uses: actions/upload-artifact@v4
         with:
