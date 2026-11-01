@@ -12,7 +12,7 @@ permissions:
 jobs:
   macos:
     name: macOS 原生版
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -146,7 +146,7 @@ jobs:
       - name: 编译桌面端
         run: |
           cd desktop
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "desktop,production" -trimpath \
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "desktop,production,webkit2_41" -trimpath \
             -ldflags "-s -w" -o ../build/fudan-vpn .
 
       - name: 组装
