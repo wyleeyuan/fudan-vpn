@@ -1,0 +1,7 @@
+FudanVPN.app/
+FudanVPN.app.prev/
+.build/
+.DS_Store
+*.o
+*.dSYM/
+build/
