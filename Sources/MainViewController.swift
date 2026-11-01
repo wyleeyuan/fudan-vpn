@@ -142,7 +142,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         statsLabel.alignment = .right
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let hint = NSTextField(labelWithString: "关掉窗口不会断开连接——App 常驻菜单栏，点图标随时连接或断开。分流器只监听 127.0.0.1:\(SplitProxy.port)，未命中规则的流量一律直连。")
+        let hint = NSTextField(labelWithString: "关掉窗口不会断开连接——App 常驻菜单栏，点图标随时连接或断开。分流器只监听 127.0.0.1:\(LocalPorts.split)，未命中规则的流量一律直连。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
         hint.lineBreakMode = .byWordWrapping
@@ -237,20 +237,15 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         }
         tunnel.onLog = { [weak self] line in self?.appendLog(line) }
 
-        SplitProxy.shared.onLog = { [weak self] line in self?.appendLog(line) }
-        SplitProxy.shared.onStats = { [weak self] tunnelCount, directCount in
-            self?.statsLabel.stringValue = "隧道 \(tunnelCount) · 直连 \(directCount)"
-        }
     }
 
     /// 隧道一通就起分流器，断了就收掉——避免留下还在监听 1082 的孤儿。
     private func handle(_ phase: TunnelManager.Phase) {
         switch phase {
         case .connected:
-            SplitProxy.shared.resetStats()
-            SplitProxy.shared.start()
+            statsLabel.stringValue = "分流 \(LocalPorts.split)"
         default:
-            SplitProxy.shared.stop()
+            statsLabel.stringValue = ""
         }
         onPhaseChange?(phase)
     }
@@ -294,7 +289,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
                 return
             }
             SystemProxy.enable()
-            appendLog("浏览器已切到智能分流：系统 SOCKS -> 127.0.0.1:\(SplitProxy.port)")
+            appendLog("浏览器已切到智能分流：系统 SOCKS -> 127.0.0.1:\(LocalPorts.split)")
         } else {
             SystemProxy.disable()
             appendLog("浏览器已恢复原来的代理设置")
@@ -398,8 +393,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     }
 
     @objc private func openRulesFile() {
-        RoutingRules.writeDefaultIfNeeded()
-        let url = RoutingRules.fileURL
+        SplitRules.writeDefaultIfNeeded()
+        let url = SplitRules.fileURL
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         proc.arguments = ["-t", url.path]

@@ -25,6 +25,7 @@ import (
 	"github.com/mythologyli/zju-connect/internal/keylog"
 	"github.com/mythologyli/zju-connect/log"
 	"github.com/mythologyli/zju-connect/resolve"
+	"github.com/mythologyli/zju-connect/router"
 	"github.com/mythologyli/zju-connect/service"
 	"github.com/mythologyli/zju-connect/stack"
 	"github.com/mythologyli/zju-connect/stack/gvisor"
@@ -394,6 +395,20 @@ func main() {
 
 	if conf.SocksBind != "" {
 		go service.ServeSocks5(conf.SocksBind, vpnDialer, vpnResolver, conf.SocksUser, conf.SocksPasswd)
+	}
+
+	if conf.RouterBind != "" {
+		rules, err := router.Load(conf.RouterRules)
+		if err != nil {
+			log.Printf("Failed to load routing rules, router disabled: %s", err)
+		} else {
+			if rules.Path() != "" {
+				log.Printf("Loaded %d routing rules from %s", rules.Len(), rules.Path())
+			} else {
+				log.Printf("Loaded %d built-in routing rules", rules.Len())
+			}
+			go service.ServeRouter(conf.RouterBind, vpnDialer, vpnResolver, rules)
+		}
 	}
 
 	if conf.HTTPBind != "" {

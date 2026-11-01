@@ -65,8 +65,10 @@ final class TunnelManager {
             "-login-domain",    "id.fudan.edu.cn",
             "-oauth2-code",     code,
             "-bind-interface",  Self.primaryInterface(),
-            "-socks-bind",      "127.0.0.1:1080",
-            "-http-bind",       "127.0.0.1:1081",
+            "-socks-bind",      "127.0.0.1:\(LocalPorts.tunnel)",
+            "-http-bind",       "127.0.0.1:\(LocalPorts.http)",
+            "-router-bind",     "127.0.0.1:\(LocalPorts.split)",
+            "-router-rules",    SplitRules.fileURL.path,
             "-client-data-file", clientDataURL.path
         ]
 

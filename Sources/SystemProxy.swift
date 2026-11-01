@@ -51,7 +51,7 @@ final class SystemProxy {
     /// 1080 是「全都送进复旦」的裸隧道，1082 才会按规则判断，
     /// 只有命中规则的域名/网段进隧道，其余直连。
     @discardableResult
-    static func enable(port: UInt16 = SplitProxy.port) -> Bool {
+    static func enable(port: UInt16 = LocalPorts.split) -> Bool {
         guard !isEnabled else { return true }
 
         resolveServiceName()

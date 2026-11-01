@@ -9,6 +9,8 @@ type Config struct {
 	Password            string                 `koanf:"password"`
 	TOTPSecret          string                 `koanf:"totp_secret"`
 	SocksBind           string                 `koanf:"socks_bind"`
+	RouterBind          string                 `koanf:"router_bind"`
+	RouterRules         string                 `koanf:"router_rules"`
 	SocksUser           string                 `koanf:"socks_user"`
 	SocksPasswd         string                 `koanf:"socks_passwd"`
 	HTTPBind            string                 `koanf:"http_bind"`

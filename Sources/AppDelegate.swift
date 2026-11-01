@@ -169,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         switch phase {
         case .connected:
-            statusText = "已连接 · 127.0.0.1:\(SplitProxy.port)"
+            statusText = "已连接 · 127.0.0.1:\(LocalPorts.split)"
             iconState = .connected
             connected = true
         case .launching:

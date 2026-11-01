@@ -22,14 +22,15 @@ swiftc \
   Sources/LoginWebController.swift \
   Sources/TunnelManager.swift \
   Sources/SystemProxy.swift \
-  Sources/RoutingRules.swift \
-  Sources/SplitProxy.swift \
+  Sources/LocalPorts.swift \
   -o "$APP/Contents/MacOS/$BIN"
 
 echo "[2/4] 拷贝资源…"
 cp Resources/fudan-connect "$APP/Contents/Resources/fudan-connect"
 chmod +x "$APP/Contents/Resources/fudan-connect"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# 默认分流规则与引擎共用同一份源文件
+cp engine/router/default_rules.conf "$APP/Contents/Resources/rules.conf"
 if [ -f Resources/FudanVPN.icns ]; then
   cp Resources/FudanVPN.icns "$APP/Contents/Resources/FudanVPN.icns"
 else

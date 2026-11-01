@@ -101,6 +101,8 @@ func newFlagSet(defaults configs.Config) *pflag.FlagSet {
 	flags.Bool("disable-multi-line", defaults.DisableMultiLine, "Disable multi line auto select")
 	flags.Bool("proxy-all", defaults.ProxyAll, "Proxy all traffic (only for debug usage)")
 	flags.String("socks-bind", defaults.SocksBind, "The address SOCKS5 server listens on")
+	flags.String("router-bind", defaults.RouterBind, "The address of the rule-based SOCKS5 server listens on")
+	flags.String("router-rules", defaults.RouterRules, "Clash-style rules file; the router is used only when router-bind is set")
 	flags.String("socks-user", defaults.SocksUser, "SOCKS5 username")
 	flags.String("socks-passwd", defaults.SocksPasswd, "SOCKS5 password")
 	flags.String("http-bind", defaults.HTTPBind, "The address HTTP server listens on")
