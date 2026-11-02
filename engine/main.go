@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/tls"
+	"errors"
 	"net"
 	"os"
 	"os/signal"
@@ -37,6 +38,13 @@ import (
 )
 
 var conf configs.Config
+
+// exitNeedsLogin 是「缓存会话已失效、需要用用户重新登录」的专用退出码。
+//
+// GUI 靠它决定下一步：弹登录页，而不是把 "VPN client setup error" 当成故障
+// 贴给用户。用退出码而不是匹配日志文本，是因为日志措辞随时会改，而这个约定
+// 只有一处定义。
+const exitNeedsLogin = 3
 
 func main() {
 	if exitCode := initialize(os.Args[1:]); exitCode >= 0 {
@@ -152,18 +160,25 @@ func main() {
 
 		var loginMethod auth.LoginMethod
 		if conf.SID == "" || conf.DeviceID == "" || resourceData == nil {
-			loginMethod, err = auth.NewLoginMethod(auth.LoginMethodOptions{
-				AuthType:      conf.AuthType,
-				Username:      conf.Username,
-				Password:      conf.Password,
-				Phone:         conf.Phone,
-				Domain:        conf.LoginDomain,
-				GraphCodeFile: conf.GraphCodeFile,
-				CASTicket:     conf.CasTicket,
-				OAuth2Code:    conf.OAuth2Code,
-			})
-			if err != nil {
-				log.Fatalf("Configure aTrust login: %v", err)
+			if conf.ReuseSession {
+				// 只拿 client_data 里的 cookie 去问服务端「还认得我吗」。认得就
+				// 直接进（aTrust 返回 isLogin=1），不认得就返回 ErrNotLoggedIn，
+				// 这里不弹任何交互——登录页归 GUI 管，命令行不该去抢终端。
+				log.Println("Reuse saved session, skipping interactive login")
+			} else {
+				loginMethod, err = auth.NewLoginMethod(auth.LoginMethodOptions{
+					AuthType:      conf.AuthType,
+					Username:      conf.Username,
+					Password:      conf.Password,
+					Phone:         conf.Phone,
+					Domain:        conf.LoginDomain,
+					GraphCodeFile: conf.GraphCodeFile,
+					CASTicket:     conf.CasTicket,
+					OAuth2Code:    conf.OAuth2Code,
+				})
+				if err != nil {
+					log.Fatalf("Configure aTrust login: %v", err)
+				}
 			}
 		}
 
@@ -203,6 +218,12 @@ func main() {
 			_ = underlayDialer.Close()
 			if tlsKeyLogWriter != nil {
 				_ = tlsKeyLogWriter.Close()
+			}
+			if errors.Is(err, auth.ErrNotLoggedIn) {
+				// 缓存会话过期，不是故障：给 GUI 一个能分辨的信号就退出。
+				log.Println("Saved session expired, login required")
+				log.Printf("VPN client setup error: %s", err)
+				os.Exit(exitNeedsLogin)
 			}
 			log.Fatalf("VPN client setup error: %s", err)
 		}

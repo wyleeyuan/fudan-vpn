@@ -142,6 +142,7 @@ func newFlagSet(defaults configs.Config) *pflag.FlagSet {
 	flags.String("resource-file", defaults.ResourceFile, "aTrust Resource File")
 	flags.Int("update-best-nodes-interval", defaults.UpdateBestNodesInterval, "Interval to update best nodes in seconds")
 	flags.Int("session-refresh-interval", defaults.SessionRefreshInterval, "aTrust session refresh interval in seconds (0 disables)")
+	flags.Bool("reuse-session", false, "Reuse the session saved in client-data-file instead of logging in again")
 
 	for _, spec := range collectionSpecs {
 		flags.String(spec.FlagName, "", spec.Help)

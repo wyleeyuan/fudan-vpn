@@ -70,6 +70,11 @@ type Config struct {
 	ResourceFile            string   `koanf:"resource_file"`
 	UpdateBestNodesInterval int      `koanf:"update_best_nodes_interval"`
 	SessionRefreshInterval  int      `koanf:"session_refresh_interval"`
+
+	// 只用 client_data 里的 cookie 恢复会话，不发起交互式登录。
+	// 服务端还认这份会话就直接进（aTrust 的 isLogin=1），不认就返回
+	// auth.ErrNotLoggedIn，由调用方决定要不要让用户重新登录。
+	ReuseSession bool `koanf:"reuse_session"`
 }
 
 type SinglePortForwarding struct {

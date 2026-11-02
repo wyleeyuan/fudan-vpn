@@ -13,6 +13,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
                                        target: nil, action: nil)
     private let upstreamToggle = NSButton(checkboxWithTitle: "非校内流量借本机代理出去（同时开着 Clash 时勾选）",
                                           target: nil, action: nil)
+    private let rememberToggle = NSButton(checkboxWithTitle: "记住登录状态（下次打开不用再扫码）",
+                                          target: nil, action: nil)
     private let rulesButton = NSButton(title: "编辑分流规则", target: nil, action: nil)
     private let statsLabel = NSTextField(labelWithString: "")
     private let logView = NSTextView()
@@ -21,6 +23,21 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var loginController: LoginWebController?
     /// 授权码已经拿到、马上要建隧道：此时关窗口不算「取消登录」。
     private var loginCommitted = false
+
+    /// 会话被服务端明确判定失效（引擎退出码 3）。
+    ///
+    /// 此后一律走扫码，不再拿同一份 cookie 反复试——试也不会成功，
+    /// 只会让人卡在「点了没反应」和「又弹登录页」之间。
+    private var sessionRejected = false
+
+    /// 连续几次静默复用没成功。网络抖动值得再试一次，连撞两次就不赌了。
+    private var silentFailures = 0
+
+    /// 这次连接是 App 启动时自己发起的，不是用户点的。
+    ///
+    /// 只影响一件事：失败时不主动弹登录页。打开 App 的人可能只是想改个设置，
+    /// 一进来就被登录窗口挡住很粗暴——按钮上写着「扫码登录」，点了才开。
+    private var autoConnecting = false
 
     /// 状态变化通知菜单栏，让图标和菜单项跟着变。
     var onPhaseChange: ((TunnelManager.Phase) -> Void)?
@@ -32,6 +49,17 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         buildUI()
         wire()
         render()
+        // 打开即连：本机还留着上次的会话，就不该让人再看一遍扫码页。
+        // 放到下一轮 runloop，等窗口和菜单栏都搭好再起，日志才有地方落。
+        DispatchQueue.main.async { [weak self] in
+            self?.autoConnectIfPossible()
+        }
+    }
+
+    /// 启动时的一次性尝试。没有缓存会话、或上次已判失效，就安静地停在未连接。
+    private func autoConnectIfPossible() {
+        guard tunnel.phase == .idle, tunnel.hasSavedSession, !sessionRejected else { return }
+        startConnect(auto: true)
     }
 
     // MARK: 界面搭建
@@ -136,6 +164,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         upstreamToggle.font = .systemFont(ofSize: 12)
         upstreamToggle.translatesAutoresizingMaskIntoConstraints = false
 
+        rememberToggle.target = self
+        rememberToggle.action = #selector(toggleRemember)
+        rememberToggle.font = .systemFont(ofSize: 12)
+        rememberToggle.translatesAutoresizingMaskIntoConstraints = false
+
         rulesButton.target = self
         rulesButton.action = #selector(openRulesFile)
         rulesButton.bezelStyle = .inline
@@ -159,6 +192,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         container.addSubview(actionButton)
         container.addSubview(proxyToggle)
         container.addSubview(upstreamToggle)
+        container.addSubview(rememberToggle)
         container.addSubview(rulesButton)
         container.addSubview(statsLabel)
         container.addSubview(hint)
@@ -177,7 +211,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             upstreamToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
             upstreamToggle.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
 
-            rulesButton.topAnchor.constraint(equalTo: upstreamToggle.bottomAnchor, constant: 10),
+            rememberToggle.topAnchor.constraint(equalTo: upstreamToggle.bottomAnchor, constant: 6),
+            rememberToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            rememberToggle.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+
+            rulesButton.topAnchor.constraint(equalTo: rememberToggle.bottomAnchor, constant: 10),
             rulesButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 22),
 
             statsLabel.centerYAnchor.constraint(equalTo: rulesButton.centerYAnchor),
@@ -248,13 +286,28 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.render()
         }
         tunnel.onLog = { [weak self] line in self?.appendLog(line) }
-
+        tunnel.onNeedsLogin = { [weak self] in
+            guard let self else { return }
+            let wasAuto = self.autoConnecting
+            self.autoConnecting = false
+            self.sessionRejected = true
+            self.silentFailures = 0
+            self.appendLog("上次的登录状态已失效——学校那边只认一定时长，过期只能重新扫码。")
+            self.render()
+            // 自动连接失败不弹窗：用户可能只是想打开设置看一眼。
+            guard !wasAuto else { return }
+            self.showWindow()
+            self.presentLogin()
+        }
     }
 
     /// 隧道一通就起分流器，断了就收掉——避免留下还在监听 1082 的孤儿。
     private func handle(_ phase: TunnelManager.Phase) {
         switch phase {
         case .connected:
+            silentFailures = 0
+            autoConnecting = false
+            sessionRejected = false
             statsLabel.stringValue = "分流 \(LocalPorts.split)"
             // 默认就把浏览器接到分流器上：连上之后校内站点应当直接能开，
             // 不该还要用户先去窗口里找一个勾选框。取消过就一直记着，不会
@@ -265,6 +318,22 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             }
             syncProxyToggle()
             startProxyWatchdog()
+        case .failed(let reason):
+            statsLabel.stringValue = ""
+            stopProxyWatchdog()
+            autoConnecting = false
+            // 会话过期不会走到这里（那条路是 onNeedsLogin + 退出码 3），
+            // 能到这儿的基本是网络或服务端临时故障。网络抖动值得再试一次，
+            // 但同一份 cookie 连撞两次就别赌了，把「扫码登录」摆出来。
+            if tunnel.silentAttempt {
+                silentFailures += 1
+                if silentFailures >= 2 {
+                    sessionRejected = true
+                    appendLog("连续两次复用登录状态都没成功（\(reason)），需要扫码登录一次。")
+                } else {
+                    appendLog("复用登录状态失败：\(reason)。点「重试」再来一次。")
+                }
+            }
         default:
             statsLabel.stringValue = ""
             stopProxyWatchdog()
@@ -316,20 +385,38 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         case .connected, .launching:
             tunnel.disconnect()
         case .idle, .failed:
-            presentLogin()
+            startConnect()
         }
     }
 
     /// 菜单栏那个「连接 / 断开」调这里。未连接时先把窗口叫出来，
-    /// 因为登录 sheet 得挂在一个可见的窗口上。
+    /// 因为登录窗口得有个主窗口在旁边，用户才知道发生了什么。
     func toggleConnection() {
         switch tunnel.phase {
         case .connected, .launching:
             tunnel.disconnect()
         case .idle, .failed:
             showWindow()
-            presentLogin()
+            startConnect()
         }
+    }
+
+    /// 连接的第一步：先拿本机缓存的会话试一次，不行再让人扫码。
+    ///
+    /// 授权码是一次性的，重启 App 之后手里必然没有；但服务端那边的 aTrust
+    /// 会话往往还活着。能复用的话连登录窗口都不用打开。
+    ///
+    /// `auto` 为真表示这是启动时自己发起的：连不上就安静停在未连接，
+    /// 绝不弹登录页（选择权留给用户点按钮）。
+    private func startConnect(auto: Bool = false) {
+        guard tunnel.hasSavedSession, !sessionRejected else {
+            if auto { return }
+            presentLogin()
+            return
+        }
+        autoConnecting = auto
+        appendLog("正在复用上次的登录状态…")
+        tunnel.connect(code: nil)
     }
 
     func showWindow() {
@@ -442,7 +529,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         loginWindow = nil
         loginController = nil
         if !loginCommitted {
-            appendLog("已取消登录，未建立连接——随时可以再点「登录」重新来")
+            appendLog("已取消登录，未建立连接——随时可以再点「扫码登录」重新来")
         }
         loginCommitted = false
         render()
@@ -468,6 +555,21 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         }
     }
 
+    /// 关掉这个开关就把本地会话删掉，不是只记一个偏好——
+    /// 否则「不记住」只是不读，文件还在，等于没关。
+    @objc private func toggleRemember() {
+        let on = rememberToggle.state == .on
+        UserDefaults.standard.set(on, forKey: TunnelManager.rememberLoginKey)
+
+        if on {
+            appendLog("以后打开 App 会先复用上次的登录状态；学校那边失效了才需要重新扫码。")
+        } else {
+            TunnelManager.forgetSavedSession()
+            appendLog("已清除本机保存的登录状态，下次连接需要重新扫码。")
+        }
+        render()
+    }
+
     @objc private func openRulesFile() {
         SplitRules.writeDefaultIfNeeded()
         let url = SplitRules.fileURL
@@ -491,6 +593,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         proxyToggle.isEnabled = connected
         proxyToggle.state = SystemProxy.isEnabled ? .on : .off
         upstreamToggle.state = TunnelManager.upstreamWanted ? .on : .off
+        rememberToggle.state = TunnelManager.rememberLoginWanted ? .on : .off
     }
 
     // MARK: 渲染
@@ -506,13 +609,23 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         switch tunnel.phase {
         case .idle:
             color = .secondaryLabelColor
-            subtitleLabel.stringValue = "未连接 · 关掉窗口也不会断开，点菜单栏图标可随时连接"
-            setActionTitle("登录复旦 UIS")
+            if sessionRejected {
+                subtitleLabel.stringValue = "未连接 · 上次的登录状态已失效，需要扫码一次"
+                setActionTitle("扫码登录")
+            } else if tunnel.hasSavedSession {
+                subtitleLabel.stringValue = "未连接 · 上次的登录状态还在，点「连接」不用扫码"
+                setActionTitle("连接")
+            } else {
+                subtitleLabel.stringValue = "未连接 · 关掉窗口也不会断开，点菜单栏图标可随时连接"
+                setActionTitle("扫码登录")
+            }
             actionButton.isEnabled = true
 
         case .launching:
             color = .systemOrange
-            subtitleLabel.stringValue = "正在建立隧道，用授权码换取 aTrust 会话…"
+            subtitleLabel.stringValue = tunnel.silentAttempt
+                ? "正在复用上次的登录状态…"
+                : "正在建立隧道，用授权码换取 aTrust 会话…"
             setActionTitle("取消")
             actionButton.isEnabled = true
 
@@ -528,7 +641,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         case .failed(let reason):
             color = .systemRed
             subtitleLabel.stringValue = "连接失败 · \(reason)"
-            setActionTitle("重新登录")
+            // 会话还在就只是重试，别让人以为非得扫码；判失效了才给扫码入口。
+            setActionTitle(sessionRejected ? "扫码登录" : "重试")
             actionButton.isEnabled = true
         }
 

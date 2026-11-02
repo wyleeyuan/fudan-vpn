@@ -23,8 +23,19 @@ final class TunnelManager {
 
     private(set) var connectedAt: Date?
 
+    /// 这次启动是「拿缓存会话静默试一次」而不是扫码换来的。
+    /// 只影响界面措辞：两种情况下引擎看到的东西不一样。
+    private(set) var silentAttempt = false
+
     var onPhase: ((Phase) -> Void)?
     var onLog: ((String) -> Void)?
+
+    /// 缓存会话过期了，需要用户重新扫码。上层据此直接弹登录页。
+    var onNeedsLogin: (() -> Void)?
+
+    /// 引擎用这个退出码表示「缓存会话已失效」。必须与 `engine/main.go`
+    /// 里的 `exitNeedsLogin` 一致；改一边就要改另一边。
+    static let exitNeedsLogin: Int32 = 3
 
     private var process: Process?
     private var pipe: Pipe?
@@ -36,11 +47,38 @@ final class TunnelManager {
         Bundle.main.url(forResource: "fudan-connect", withExtension: nil)
     }
 
-    private var clientDataURL: URL {
+    /// 会话文件的固定位置。连接时交给引擎，退出时按需删掉，
+    /// 两处必须是同一个路径——所以只在这里拼一次。
+    static var clientDataURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("FudanVPN", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("client_data.json")
+    }
+
+    // MARK: 登录状态
+
+    static let rememberLoginKey = "RememberLogin"
+
+    /// 是否把 aTrust 会话留在本机。
+    ///
+    /// 默认留：不留的话每次打开都要重新扫码，而扫码必须有人拿着手机。
+    /// 文件是 0600，内容是服务端下发的会话 cookie，不是密码。
+    static var rememberLoginWanted: Bool {
+        UserDefaults.standard.object(forKey: rememberLoginKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: rememberLoginKey)
+    }
+
+    /// 本地是否存着上一次的会话。没存就别白起一次引擎。
+    var hasSavedSession: Bool {
+        Self.rememberLoginWanted
+            && FileManager.default.fileExists(atPath: Self.clientDataURL.path)
+    }
+
+    /// 删掉本地会话，下次必须重新扫码。
+    static func forgetSavedSession() {
+        try? FileManager.default.removeItem(at: clientDataURL)
     }
 
     // MARK: 上游
@@ -60,7 +98,12 @@ final class TunnelManager {
 
     // MARK: 连接
 
-    func connect(code: String) {
+    /// 起隧道。
+    ///
+    /// `code` 为 nil 表示「不扫码，只拿本地保存的会话试一次」。成功的话
+    /// 连扫码页都不用打开；会话过期时引擎会以退出码 3 结束，再由
+    /// `onNeedsLogin` 把用户领到登录页。
+    func connect(code: String?) {
         guard process == nil else { return }
         guard let binary = Self.binaryURL else {
             phase = .failed("App 内缺少 fudan-connect 可执行文件")
@@ -69,6 +112,7 @@ final class TunnelManager {
 
         phase = .launching
         connectedAt = nil
+        silentAttempt = (code == nil)
 
         let proc = Process()
         proc.executableURL = binary
@@ -76,16 +120,25 @@ final class TunnelManager {
             "-protocol",        "atrust",
             "-server",          "vpn.fudan.edu.cn",
             "-port",            "443",
-            "-auth-type",       "auth/httpsOauth2",
-            "-login-domain",    "id.fudan.edu.cn",
-            "-oauth2-code",     code,
             "-bind-interface",  Self.primaryInterface(),
             "-socks-bind",      "127.0.0.1:\(LocalPorts.tunnel)",
             "-http-bind",       "127.0.0.1:\(LocalPorts.http)",
             "-router-bind",     "127.0.0.1:\(LocalPorts.split)",
             "-router-rules",    SplitRules.fileURL.path,
-            "-client-data-file", clientDataURL.path
+            "-client-data-file", Self.clientDataURL.path
         ]
+
+        if let code, !code.isEmpty {
+            args += [
+                "-auth-type",     "auth/httpsOauth2",
+                "-login-domain",  "id.fudan.edu.cn",
+                "-oauth2-code",   code
+            ]
+        } else {
+            // 授权码是一次性的，重启 App 必然没有新的。让引擎只拿
+            // client_data.json 里的 cookie 去问服务端「还认得我吗」。
+            args += ["-reuse-session"]
+        }
 
         // 本机还开着别的代理（Clash 之类）时，把非校内的流量顺着它出去。
         // 不然浏览器被指到 1082 之后，Google、ChatGPT 会被兜底规则判成直连，
@@ -138,6 +191,15 @@ final class TunnelManager {
                 self.process = nil
                 self.connectedAt = nil
 
+                // 退出码 3 是引擎约定的「缓存会话过期」。这不是故障：静默试
+                // 的那一次失败本来就在预期内，交给上层弹登录页，别显示成
+                // 「启动失败」吓人。
+                if finished.terminationStatus == Self.exitNeedsLogin, self.phase == .launching {
+                    self.phase = .idle
+                    self.onNeedsLogin?()
+                    return
+                }
+
                 switch self.phase {
                 case .connected:
                     self.phase = .failed("隧道已断开（退出码 \(finished.terminationStatus)）")
@@ -166,6 +228,7 @@ final class TunnelManager {
         process?.terminate()
         process = nil
         connectedAt = nil
+        silentAttempt = false
         phase = .idle
         emit("已手动断开")
     }

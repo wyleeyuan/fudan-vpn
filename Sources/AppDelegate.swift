@@ -238,6 +238,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 若把浏览器留在指向 1080 的状态会直接上不了网。
         SystemProxy.restoreIfNeeded()
 
+        // 用户关掉「记住登录状态」时，这次运行里引擎又把会话写回了文件，
+        // 所以退出前再删一次——否则下一次打开仍然免扫码。
+        if !TunnelManager.rememberLoginWanted {
+            TunnelManager.forgetSavedSession()
+        }
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
         task.arguments = ["-f", "FudanVPN.app/Contents/Resources/fudan-connect"]

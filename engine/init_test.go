@@ -32,6 +32,25 @@ func TestSessionRefreshConfiguration(t *testing.T) {
 	}
 }
 
+func TestReuseSessionConfiguration(t *testing.T) {
+	options, _, err := loadStartupOptions([]string{"-reuse-session"}, func() []string { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.Config.ReuseSession {
+		t.Fatal("ReuseSession = false, want true")
+	}
+
+	// 默认必须关：老用法（-oauth2-code / 账号密码）不该被静默改成不登录。
+	options, _, err = loadStartupOptions(nil, func() []string { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Config.ReuseSession {
+		t.Fatal("ReuseSession = true by default")
+	}
+}
+
 func TestConfigSourcePrecedence(t *testing.T) {
 	configFile := writeConfig(t, `
 protocol = "atrust"

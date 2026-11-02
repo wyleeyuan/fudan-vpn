@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	mathrand "math/rand"
@@ -24,6 +25,11 @@ const (
 	maxAttempts  = 5
 	maxAuthSteps = 8
 )
+
+// ErrNotLoggedIn 表示手里的 cookie 已经不被服务端承认，而调用方又没有提供
+// 登录方式——只有「复用缓存会话」这条路会这样。上层据此区分「该重新登录」
+// 和真正的网络/协议故障：前者该弹登录页，后者该报错。
+var ErrNotLoggedIn = errors.New("saved session is no longer valid")
 
 var sharedParams = url.Values{
 	"clientType": {"SDPClient"},
@@ -380,7 +386,9 @@ func (s *Session) Login(method LoginMethod, opts LoginOptions) (LoginResult, err
 	}
 
 	if method == nil {
-		return LoginResult{}, fmt.Errorf("login method is nil, but user is not logged in")
+		// cookie 还有效时，上面的 isLogin == 1 分支已经返回了；走到这里说明
+		// 会话过期。带上哨兵错误，让上层能和其他失败区分开。
+		return LoginResult{}, fmt.Errorf("%w: login method is nil", ErrNotLoggedIn)
 	}
 	var foundAuthInfo *AuthInfo
 	for _, authInfo := range authInfoList {
