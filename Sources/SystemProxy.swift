@@ -207,6 +207,32 @@ final class SystemProxy {
         return nil
     }
 
+    /// 系统代理是否指向一个已经没人监听的本地端口。
+    ///
+    /// 典型场景：Clash 被关掉（或崩了）却没把系统代理还原，设置仍指着
+    /// `127.0.0.1:7890`，而那个端口上已经没有程序。此时隧道本身是通的，
+    /// 但浏览器、curl、git 的流量全被送进死端口——用户看到的却是「连上网了
+    /// 但什么都打不开」，很容易误判成 VPN 坏了。
+    ///
+    /// 返回那个端口；一切正常（没设代理、端口活着、或是我们自己的口）返回 nil。
+    /// 只读，不改任何设置：这是别人的代理配置，轮不到我们去动。
+    static func staleLocalProxyPort() -> UInt16? {
+        resolveServiceName()
+
+        for getter in ["-getsocksfirewallproxy", "-getsecurewebproxy", "-getwebproxy"] {
+            let info = parse(get([getter, serviceName]))
+            guard info.enabled, info.port > 0, info.port <= 65535 else { continue }
+            let host = info.server.lowercased()
+            guard host == "127.0.0.1" || host == "localhost" || host == "::1" else { continue }
+            let port = UInt16(info.port)
+            // 自己的端口不在这个判断范围内：隧道断开时 1080/1082 本来就没人在听，
+            // 那是「还没连」而不是「残留了一个坏代理」。
+            guard port != LocalPorts.split, port != LocalPorts.tunnel, port != LocalPorts.http else { continue }
+            if !isListening(port) { return port }
+        }
+        return nil
+    }
+
     /// 本地端口有没有人在听。用非阻塞 connect + 200ms 超时判断，
     /// 不调外部命令，也不会被 DNS 卡住。端口没人听时内核直接回 RST，几乎无耗时。
     private static func isListening(_ port: UInt16) -> Bool {

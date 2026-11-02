@@ -318,6 +318,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             }
             syncProxyToggle()
             startProxyWatchdog()
+            warnIfStaleSystemProxy()
         case .failed(let reason):
             statsLabel.stringValue = ""
             stopProxyWatchdog()
@@ -350,6 +351,19 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     /// Clash 一启动就会把系统代理写成自己的端口，那之后浏览器整条走 Clash，
     /// 而 `icourse` 这类内网域名只有隧道才解析得出来，表现就是「GPT 好了、
     /// 校内站打不开」。这里订阅系统代理状态本身的变化，谁改的立刻就知道。
+    /// 隧道通了、但系统代理还指着一个没人监听的端口时，提示一句。
+    ///
+    /// 这不是我们造成的（多半是 Clash 退了没把系统代理还原），但后果落在
+    /// 用户眼前：连上了、页面上写着「已连接」，浏览器却什么都打不开。只提醒，
+    /// 不替用户改——那是别的软件的设置，不该由我们去动。
+    private func warnIfStaleSystemProxy() {
+        // 已经由我们接管时不适用：那时出口是 1082，有人听。
+        guard !SystemProxy.isEnabled,
+              let port = SystemProxy.staleLocalProxyPort() else { return }
+        appendLog("提示：系统代理仍指向 127.0.0.1:\(port)，但那个端口已经没有程序在听——"
+                  + "浏览器会打不开网页。请开回原来的代理软件，或在「系统设置 → 网络 → 代理」里关掉它。")
+    }
+
     private func startProxyWatchdog() {
         stopProxyWatchdog()
         proxyReclaimCount = 0
@@ -465,6 +479,10 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+
+        // 登录页是 WebView，会遵守系统代理；代理指着没人听的端口时页面会
+        // 一直转圈到白屏。先说清楚，省得对着空白页猜是不是学校服务器挂了。
+        warnIfStaleSystemProxy()
 
         let controller = LoginWebController(
             onCode: { [weak self] code in
