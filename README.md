@@ -1,6 +1,7 @@
 # 复旦 VPN
 
-在校园网外连回校内的轻量客户端。macOS 上是原生 App，Windows 和 Linux 是同一个界面。
+在校园网外连回校内的轻量客户端。图形界面只做 macOS（原生 App、菜单栏），
+另有一个命令行版给服务器和路由器用。
 
 它自带**分流**：只有复旦的域名、校内网段、按学校出口授权的学术库走隧道，其余一律直连。
 所以 `api.openai.com`、`github.com`、`npm` 这些不会被它拽到学校出口去。
@@ -13,8 +14,6 @@
 | 平台 | 形态 | 下载 |
 |---|---|---|
 | macOS 13+（Apple Silicon） | 原生 App（菜单栏） | `FudanVPN-x.y.z.dmg` |
-| Windows 10 / 11 | 独立窗口程序（x64） | `FudanVPN-x.y.z-windows-amd64.zip` |
-| Linux x86_64 | 独立窗口程序，需要 GTK3 / WebKitGTK 4.1 | `FudanVPN-x.y.z-linux-amd64.tar.gz` |
 | 服务器 / 树莓派 / 路由器 | 命令行，无图形界面 | `fudan-connect-x.y.z-cli.tar.gz` |
 
 ## 二、安装
@@ -28,29 +27,11 @@
 xattr -dr com.apple.quarantine /Applications/FudanVPN.app
 ```
 
-**Windows**：解压出一个目录，双击 `fudan-vpn.exe`。四个文件必须放在一起，别只把 exe
-拖到桌面。首次运行 SmartScreen 可能提示「Windows 已保护你的电脑」，点「更多信息」→
-「仍要运行」。
-
-Windows 版**不接管系统代理**，所以和 Clash 抢不起来；代价是不会自动帮浏览器分流，要同时
-用 Clash 就把复旦的域名指到 `127.0.0.1:1082`，接法见第五节 **B**。
-
-**Linux**：
-
-```bash
-tar -xzf FudanVPN-x.y.z-linux-amd64.tar.gz
-cd fudan-vpn          # 三个文件放同一目录
-./fudan-vpn
-```
-
-缺库的话装一下：Debian/Ubuntu 是 `libwebkit2gtk-4.1-0 libgtk-3-0`，
-Fedora 是 `webkit2gtk4.1 gtk3`。
-
 **命令行版**：解压后按平台挑一个可执行文件，`./fudan-connect --help` 看参数。
 
 ## 三、使用
 
-三个平台的流程一样，只是登录那一步的交互不同。
+图形界面的流程如下（命令行版见第七节末尾）。
 
 1. 点「登录」
 2. 用复旦统一身份认证登录（微信扫码，或账号密码 + 二次认证）
@@ -65,10 +46,7 @@ Fedora 是 `webkit2gtk4.1 gtk3`。
 按钮会变成「扫码登录」，点了才打开登录页——不会一启动就被登录窗口挡住。想彻底清掉这个
 状态，把窗口里「记住登录状态」取消勾选，本地会话立刻删掉。
 
-**macOS**：登录页在 App 自己的窗口里，扫完码自动回到 App，不用复制粘贴。
-
-**Windows / Linux**：登录页用系统浏览器打开，登录完把**地址栏那一整条网址**复制，
-粘进程序里的输入框，点「连接」。多一步粘贴，但不受内嵌浏览器和学校页面的兼容性影响。
+登录页在 App 自己的窗口里，扫完码自动回到 App，不用复制粘贴。
 
 **登录窗口随时能关。** 手机不在身边、页面还在转圈、二维码没出来都不影响：左上角红叉、
 `⌘W`、`Esc`、底部「取消登录」四条路都能退出。关掉只是取消这次登录，隧道不会建立，
@@ -107,9 +85,7 @@ Fedora 是 `webkit2gtk4.1 gtk3`。
 
 ## 五、和 Clash 同时开
 
-这一节以 **macOS** 为例：只有 macOS 版会去写系统代理，也只有它有下面说的那两个复选框。
-Windows / Linux 版根本不碰系统代理，抢槽位这件事从源头就不存在，它们能用的接法只有
-**B（Clash 当总入口）**——做法看 B 小节，C 小节里那些开关在那边没有。
+只有 macOS 版会去写系统代理，下面说的那两个复选框也只在这个版本里有。
 
 ### 为什么会打架
 
@@ -226,8 +202,7 @@ prepend-rules:
 前两条必须在 `DOMAIN-SUFFIX,fudan.edu.cn` **前面**：登录页和门户本身要直连，送进隧道
 反而打不开。如果你的客户端不认 `prepend-rules`，就把这五条手工插到规则列表最前面。
 
-然后两个复选框都关掉（Windows / Linux 版没有这两个开关，程序起引擎时已经带上
-`-no-upstream`，不用设）。命令行加 `-no-upstream` 等价：
+然后把两个复选框都关掉；命令行版加 `-no-upstream` 等价：
 
 ```bash
 fudan-connect -router-bind 127.0.0.1:1082 -no-upstream
@@ -295,11 +270,7 @@ App 日志里也有对应的话：
 
 规则文件：
 
-| 平台 | 位置 |
-|---|---|
-| macOS | `~/Library/Application Support/FudanVPN/rules.conf` |
-| Windows | `%APPDATA%\FudanVPN\rules.conf` |
-| Linux | `~/.config/FudanVPN/rules.conf` |
+位置：`~/Library/Application Support/FudanVPN/rules.conf`
 
 程序里点「编辑分流规则」直接打开。格式和 Clash 一样，改完存盘即生效，**不用重启**，
 下一次新连接就按新规则走（已建立的连接不受影响）。
@@ -367,8 +338,7 @@ Host lab
     ProxyCommand /bin/sh -c "nc -X 5 -x 127.0.0.1:1082 %h %p"
 ```
 
-（用 1082 而不是 1080：分流口会判内网段走隧道，公网地址仍然直连。Windows 上的
-`nc` 可以换成 `connect.exe`，或者直接用 Clash 那条出站规则。）
+（用 1082 而不是 1080：分流口会判内网段走隧道，公网地址仍然直连。）
 
 **VS Code Remote-SSH**：同上，设置里把 `remote.SSH.configFile` 指到这份 config 即可。
 
@@ -412,9 +382,6 @@ Host lab
 三种可能：一是关掉了「记住登录状态」，本机根本没有会话；二是上次的登录状态已失效
 （按钮会写着「扫码登录」）；三是网络还没通，日志里会有这次尝试的失败原因，点「重试」
 再试一次，连撞两次不成功程序就会改让你扫码，避免一直空转。
-
-**Windows 提示「Windows 已保护你的电脑」**
-点「更多信息」→「仍要运行」。程序没有代码签名证书。
 
 **登录页一直转圈 / 二维码不出来**
 关掉重开。学校登录页偶尔加载慢，等几秒；仍然不行就用浏览器打开
