@@ -1,6 +1,8 @@
 name: build
 
-# 打 tag（v0.5.0）自动出 macOS 安装包和命令行版并挂到 Release；也可以在 Actions 页面手动跑。
+# 打 tag（v0.5.0）自动出 macOS 安装包并挂到 Release；也可以在 Actions 页面手动跑。
+# 只发 macOS：Windows / Linux 桌面版不接管系统代理，命令行版的场景（服务器常驻、
+# 配合 ssh 跳板）用 App 的 1082 分流口就能覆盖，都不再构建。
 on:
   workflow_dispatch:
   push:
@@ -35,81 +37,9 @@ jobs:
           path: build/*.dmg
           if-no-files-found: error
 
-  cli:
-    name: 命令行版（服务器/路由器）
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: engine/go.mod
-          check-latest: true
-          cache-dependency-path: engine/go.sum
-
-      - name: 读取版本
-        id: v
-        run: |
-          V=$(grep -A1 CFBundleShortVersionString Resources/Info.plist | tail -1 | sed 's/[^0-9.]//g')
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-
-      - name: 交叉编译各平台
-        run: |
-          V="${{ steps.v.outputs.version }}"
-          OUT="$GITHUB_WORKSPACE/build/cli"
-          mkdir -p "$OUT"
-          for t in linux/amd64 linux/arm64 linux/arm linux/mipsle darwin/arm64 darwin/amd64 windows/amd64; do
-            goos=${t%/*}
-            goarch=${t#*/}
-            ext=""
-            [ "$goos" = windows ] && ext=".exe"
-            printf '  %-18s' "$goos/$goarch"
-            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-              go build -C "$GITHUB_WORKSPACE/engine" -trimpath \
-              -ldflags "-s -w -X main.zjuConnectVersion=$V" \
-              -o "$OUT/fudan-connect-$goos-$goarch$ext" .
-            printf '%s\n' "$(du -h "$OUT/fudan-connect-$goos-$goarch$ext" | cut -f1)"
-          done
-
-      - name: 组装
-        run: |
-          V="${{ steps.v.outputs.version }}"
-          cd build/cli
-          cp "$GITHUB_WORKSPACE/engine/router/default_rules.conf" rules.conf
-          cat > README.txt <<'TXT'
-          复旦 VPN 命令行版 —— fudan-connect
-
-          用法与 zju-connect 一致，把名字换掉即可：
-            ./fudan-connect -server vpn.fudan.edu.cn -port 443 \
-              -protocol atrust -auth-type auth/httpsOauth2 \
-              -login-domain id.fudan.edu.cn -oauth2-code <授权码> \
-              -socks-bind 127.0.0.1:1080 \
-              -router-bind 127.0.0.1:1082 -router-rules rules.conf
-
-          授权码怎么拿：浏览器打开 https://vpn.fudan.edu.cn ，扫码登录后
-          地址栏那条 https://vpn.fudan.edu.cn/passport/v1/auth/httpsOauth2?code=...
-          里 code= 后面就是。
-
-          -router-bind 是分流口：按 rules.conf 里的规则，复旦的域名和校内网段
-          进隧道，其余直连。不需要分流就用 -socks-bind。
-          -tun-mode 需要 root 权限，Windows 还要把 wintun.dll 放在同目录。
-
-          ./fudan-connect --help 看全部参数。
-
-          本程序基于 zju-connect 修改，遵循 AGPL-3.0。
-          TXT
-          cd ..
-          tar -czf "fudan-connect-$V-cli.tar.gz" cli
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cli
-          path: build/*.tar.gz
-          if-no-files-found: error
-
   release:
     name: 发布
-    needs: [macos, cli]
+    needs: [macos]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
@@ -133,9 +63,8 @@ jobs:
             | 你的设备 | 下这个 |
             |---|---|
             | Mac（Apple 芯片） | `FudanVPN-*-*.dmg` |
-            | 服务器 / 树莓派 / 路由器 | `fudan-connect-*-cli.tar.gz` |
 
-            图形界面只发 macOS。Windows / Linux 桌面版暂停发布，源码仍在 `desktop/`。
+            只有 macOS 版。Windows / Linux 桌面版和命令行版都不再发布了，源码仍在仓库里。
 
             ## 第一次打开
 
