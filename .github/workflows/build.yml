@@ -90,6 +90,8 @@ jobs:
 
           分流：默认只把复旦的域名和校内网段送进隧道，其余流量直连，
                 不会影响 Clash 或其它代理软件。
+          同时用 Clash：本程序不接管系统代理，在 Clash 里把 fudan.edu.cn 的规则
+                指到 SOCKS5 127.0.0.1:1082 即可，详见 README 第五节 B。
           规则：%APPDATA%\FudanVPN\rules.conf，也可以在程序里改。
 
           登录页可以随时关掉，不会卡住。

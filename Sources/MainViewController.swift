@@ -11,6 +11,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private let actionButton = ActionButton()
     private let proxyToggle = NSButton(checkboxWithTitle: "让浏览器走智能分流（只有校内规则命中的连接进隧道）",
                                        target: nil, action: nil)
+    private let upstreamToggle = NSButton(checkboxWithTitle: "非校内流量借本机代理出去（同时开着 Clash 时勾选）",
+                                          target: nil, action: nil)
     private let rulesButton = NSButton(title: "编辑分流规则", target: nil, action: nil)
     private let statsLabel = NSTextField(labelWithString: "")
     private let logView = NSTextView()
@@ -129,6 +131,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         proxyToggle.font = .systemFont(ofSize: 12)
         proxyToggle.translatesAutoresizingMaskIntoConstraints = false
 
+        upstreamToggle.target = self
+        upstreamToggle.action = #selector(toggleUpstream)
+        upstreamToggle.font = .systemFont(ofSize: 12)
+        upstreamToggle.translatesAutoresizingMaskIntoConstraints = false
+
         rulesButton.target = self
         rulesButton.action = #selector(openRulesFile)
         rulesButton.bezelStyle = .inline
@@ -142,7 +149,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         statsLabel.alignment = .right
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let hint = NSTextField(labelWithString: "关掉窗口不会断开连接——App 常驻菜单栏，点图标随时连接或断开。分流器只监听 127.0.0.1:\(LocalPorts.split)，未命中规则的流量一律直连。")
+        let hint = NSTextField(labelWithString: "关掉窗口不会断开连接——App 常驻菜单栏，点图标随时连接或断开。分流器只监听 127.0.0.1:\(LocalPorts.split)，未命中规则的流量走上面选定的出口。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
         hint.lineBreakMode = .byWordWrapping
@@ -151,6 +158,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
 
         container.addSubview(actionButton)
         container.addSubview(proxyToggle)
+        container.addSubview(upstreamToggle)
         container.addSubview(rulesButton)
         container.addSubview(statsLabel)
         container.addSubview(hint)
@@ -165,7 +173,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             proxyToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
             proxyToggle.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
 
-            rulesButton.topAnchor.constraint(equalTo: proxyToggle.bottomAnchor, constant: 10),
+            upstreamToggle.topAnchor.constraint(equalTo: proxyToggle.bottomAnchor, constant: 6),
+            upstreamToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            upstreamToggle.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+
+            rulesButton.topAnchor.constraint(equalTo: upstreamToggle.bottomAnchor, constant: 10),
             rulesButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 22),
 
             statsLabel.centerYAnchor.constraint(equalTo: rulesButton.centerYAnchor),
@@ -445,6 +457,19 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         setSystemProxy(proxyToggle.state == .on)
     }
 
+    /// 上游开关只影响本次/下次连接时传给引擎的参数，随时可以改。
+    @objc private func toggleUpstream() {
+        let on = upstreamToggle.state == .on
+        UserDefaults.standard.set(on, forKey: TunnelManager.upstreamKey)
+
+        if tunnel.phase == .connected {
+            appendLog(on ? "上游转发已开启，断开重连后生效" : "上游转发已关闭，断开重连后生效")
+        } else {
+            appendLog(on ? "已记录：连接后非校内流量借本机代理转发"
+                         : "已记录：连接后非校内流量直接走本机网络")
+        }
+    }
+
     @objc private func openRulesFile() {
         SplitRules.writeDefaultIfNeeded()
         let url = SplitRules.fileURL
@@ -467,6 +492,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         }
         proxyToggle.isEnabled = connected
         proxyToggle.state = SystemProxy.isEnabled ? .on : .off
+        upstreamToggle.state = TunnelManager.upstreamWanted ? .on : .off
     }
 
     // MARK: 渲染

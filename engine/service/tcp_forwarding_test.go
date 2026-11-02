@@ -48,7 +48,7 @@ func TestTCPForwardingCarriesMatchingL3ResourceToStack(t *testing.T) {
 		EnableTCPPrefL3: true,
 	}
 	stack := &forwardingCapturingStack{}
-	dialer := dial.NewDialer(stack, nil, []client.IPResource{resource}, false, "")
+	dialer := dial.NewDialer(stack, nil, []client.IPResource{resource}, false, "", false)
 	server, localClient := net.Pipe()
 	defer localClient.Close()
 

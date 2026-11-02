@@ -107,7 +107,7 @@ func TestServeRouterDirectUsesUpstreamProxy(t *testing.T) {
 		}))
 	go func() { _ = upstream.Serve(upstreamLn) }()
 
-	dialer := dial.NewDialer(nil, nil, nil, false, "socks://"+upstreamLn.Addr().String())
+	dialer := dial.NewDialer(nil, nil, nil, false, "socks://"+upstreamLn.Addr().String(), false)
 
 	rt, err := router.Parse(strings.NewReader("MATCH,DIRECT\n"))
 	if err != nil {
@@ -171,7 +171,7 @@ func TestServeRouterDirectFallsBackWhenProxyDead(t *testing.T) {
 	defer target.Close()
 
 	// 指向一个没人听的端口
-	dialer := dial.NewDialer(nil, nil, nil, false, "socks://127.0.0.1:1")
+	dialer := dial.NewDialer(nil, nil, nil, false, "socks://127.0.0.1:1", false)
 
 	rt, err := router.Parse(strings.NewReader("MATCH,DIRECT\n"))
 	if err != nil {

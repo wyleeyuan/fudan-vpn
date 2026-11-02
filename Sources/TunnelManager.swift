@@ -43,6 +43,21 @@ final class TunnelManager {
         return dir.appendingPathComponent("client_data.json")
     }
 
+    // MARK: 上游
+
+    /// 是否把非校内流量交给本机另一个代理（Clash、Surge 之类）。
+    ///
+    /// 默认开启：浏览器被指到分流口之后，Google、ChatGPT 总得有个出口。
+    /// 但当本程序自己被 Clash 当成上游（Clash 里把 fudan.edu.cn 指向 1082）
+    /// 时必须关掉，否则判成 DIRECT 的域名会交回 Clash 再送回来，形成闭环。
+    static let upstreamKey = "UpstreamProxyEnabled"
+
+    static var upstreamWanted: Bool {
+        UserDefaults.standard.object(forKey: upstreamKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: upstreamKey)
+    }
+
     // MARK: 连接
 
     func connect(code: String) {
@@ -75,7 +90,13 @@ final class TunnelManager {
         // 本机还开着别的代理（Clash 之类）时，把非校内的流量顺着它出去。
         // 不然浏览器被指到 1082 之后，Google、ChatGPT 会被兜底规则判成直连，
         // 在墙内直接连不上——用户只能在「连校园网」和「用 GPT」之间二选一。
-        if let upstream = SystemProxy.upstreamProxyPort() {
+        if !Self.upstreamWanted {
+            // 反过来用的时候必须关：Clash 把 fudan.edu.cn 指到 1082 之后，
+            // 分流口里判成 DIRECT 的那几条（id、vpn）会交回 Clash，Clash 又
+            // 按 fudan 规则送回来，就是 1082 -> 7890 -> 1082 的无限递归。
+            args += ["-no-upstream"]
+            emit("上游转发已关闭：非校内流量直接走本机网络（适合被 Clash 当作上游）")
+        } else if let upstream = SystemProxy.upstreamProxyPort() {
             args += ["-dial-direct-proxy", "socks://127.0.0.1:\(upstream)"]
             emit("检测到本地代理 127.0.0.1:\(upstream)，非校内流量经它转发")
         } else {

@@ -255,11 +255,21 @@ func (d *Dialer) DialDirect(ctx context.Context, network, addr string) (net.Conn
 	return d.dialDirectIP(ctx, network, addr, "")
 }
 
-func NewDialer(stack stack.Stack, resolver *resolve.Resolver, ipResources []client.IPResource, alwaysUseVPN bool, dialDirectProxy string) *Dialer {
+func NewDialer(stack stack.Stack, resolver *resolve.Resolver, ipResources []client.IPResource, alwaysUseVPN bool, dialDirectProxy string, noUpstream bool) *Dialer {
 	dialHttpProxy := ""
 	dialSocksProxy := ""
 	var auto *autoSocks
-	if dialDirectProxy == "auto" {
+	if noUpstream {
+		// 本程序被别的代理当成上游时（Clash 把 fudan.edu.cn 转到分流口），
+		// 判成 DIRECT 的域名如果又交回上游，就成了 1082 -> 7890 -> 1082
+		// 的闭环，几毫秒内就能把连接数打满。这条路必须能被显式关掉，
+		// 而不是依赖「探测不到上游」这种侥幸。
+		if dialDirectProxy != "" {
+			log.Printf("已关闭上游转发，忽略 --dial-direct-proxy=%s", dialDirectProxy)
+		}
+		log.Println("上游转发已关闭：非校内流量直接走本机网络")
+		dialDirectProxy = ""
+	} else if dialDirectProxy == "auto" {
 		auto = newAutoSocks()
 	} else if strings.HasPrefix(dialDirectProxy, "http://") {
 		dialHttpProxy = strings.TrimPrefix(dialDirectProxy, "http://")

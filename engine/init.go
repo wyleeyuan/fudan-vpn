@@ -108,6 +108,7 @@ func newFlagSet(defaults configs.Config) *pflag.FlagSet {
 	flags.String("http-bind", defaults.HTTPBind, "The address HTTP server listens on")
 	flags.String("shadowsocks-url", defaults.ShadowsocksURL, "The address Shadowsocks server listens on")
 	flags.String("dial-direct-proxy", defaults.DialDirectProxy, "Dial with proxy when a connection doesn't match RVPN rules")
+	flags.Bool("no-upstream", defaults.NoUpstream, "Never hand non-campus traffic to another local proxy (use when acting as someone else's upstream)")
 	flags.Bool("tcp-tunnel-mode", defaults.TCPTunnelMode, "Use TCP tunnel only and disable L3 tunnel")
 	flags.Bool("tun-mode", defaults.TUNMode, "Enable TUN mode (experimental)")
 	flags.Bool("add-route", defaults.AddRoute, "Add route from rules for TUN interface")

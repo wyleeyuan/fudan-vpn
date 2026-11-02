@@ -137,6 +137,12 @@ func (e *Engine) Start(code string, rulesPath string) error {
 		"-router-bind", "127.0.0.1:" + e.splitPort,
 		"-router-rules", rulesPath,
 		"-client-data-file", clientDataPath(),
+		// 桌面端（Windows / Linux）不接管系统代理，界面上也没有「非校内流量
+		// 借本机代理出去」这个开关，判成直连的流量就该直接出本机网络。
+		// 这里显式关掉而不是指望 dial_direct_proxy 默认为空：默认值哪天改成
+		// auto，或者环境里留着 FUDAN_CONNECT_DIAL_DIRECT_PROXY，就会出现
+		// 1082 -> 7890 -> 1082 的回环，而且没有任何闸能拦住。
+		"-no-upstream",
 	}
 
 	cmd := exec.Command(bin, args...)

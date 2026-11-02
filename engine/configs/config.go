@@ -40,6 +40,13 @@ type Config struct {
 	BindInterface       string                 `koanf:"bind_interface"`
 	AutoDetectInterface bool                   `koanf:"auto_detect_interface"`
 
+	// NoUpstream 关掉「非校内流量转交本机其他代理」这条腿。
+	//
+	// 本程序自己被别的代理当成上游时（Clash 把 fudan.edu.cn 指到分流口）
+	// 必须打开：那些域名里有一部分会判成 DIRECT，再交回上游就又回到 Clash，
+	// 形成 1082 -> 7890 -> 1082 的无限递归。
+	NoUpstream bool `koanf:"no_upstream"`
+
 	// EasyConnect fields
 	CertFile           string   `koanf:"cert_file"`
 	CertPassword       string   `koanf:"cert_password"`
