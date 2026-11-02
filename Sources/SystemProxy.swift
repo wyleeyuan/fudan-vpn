@@ -1,4 +1,5 @@
 import Foundation
+import SystemConfiguration
 
 /// 负责「浏览器是否走校内网络」这件事。
 ///
@@ -108,6 +109,51 @@ final class SystemProxy {
         guard isEnabled else { return }
         disable()
     }
+
+    // MARK: 监听系统代理的变化
+
+    /// 系统代理一变就叫醒 `handler`，替代原来每 5 秒轮询一次的做法。
+    ///
+    /// 轮询的代价是连接期间每 5 秒 fork 一个 `networksetup`（一天上万次），
+    /// 换来的却只有 5 秒粒度：被抢走那一刻到下一跳之间的请求照样是坏的。
+    /// `State:/Network/Global/Proxies` 就是这份设置本身，值一变就回调，
+    /// 不起进程、也没有延迟。
+    ///
+    /// source 挂在主 run loop 上，所以 handler 里可以直接碰界面。
+    static func startWatching(_ handler: @escaping () -> Void) {
+        stopWatching()
+        onChange = handler
+
+        // 回调只做转发：真正的判断（现在该不该抢）留在 handler 里，
+        // 这里拿不到也不该去猜连接状态。
+        let callback: SCDynamicStoreCallBack = { _, _, _ in
+            SystemProxy.onChange?()
+        }
+        guard let store = SCDynamicStoreCreate(nil, "FudanVPN" as CFString, callback, nil),
+              SCDynamicStoreSetNotificationKeys(store, [proxyStateKey] as CFArray, nil),
+              let source = SCDynamicStoreCreateRunLoopSource(nil, store, 0) else {
+            return
+        }
+
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        watchingStore = store
+        watchingSource = source
+    }
+
+    static func stopWatching() {
+        if let source = watchingSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        watchingSource = nil
+        watchingStore = nil
+        onChange = nil
+    }
+
+    private static let proxyStateKey = "State:/Network/Global/Proxies"
+    /// 两个都要留住：source 是从 store 里取出来的，store 一释放回调就没了。
+    private static var watchingStore: SCDynamicStore?
+    private static var watchingSource: CFRunLoopSource?
+    private static var onChange: (() -> Void)?
 
     // MARK: 还原
 
